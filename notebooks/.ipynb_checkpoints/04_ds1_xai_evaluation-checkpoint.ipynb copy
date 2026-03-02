@@ -1,0 +1,136 @@
+{
+ "nbformat": 4,
+ "nbformat_minor": 5,
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python",
+   "version": "3.10.0"
+  }
+ },
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "# XAI Evaluation \u2014 Dataset 1\nQuantitative evaluation of **SHAP** and **LIME** across **three models** (RF, SVM, MLP) using three metrics:\n\n1. **Correctness** \u2014 Incremental Deletion F1 curve (+ AOPC)\n2. **Consistency** \u2014 SHAP determinism check + LIME Jaccard Similarity (10 runs)\n3. **Contrastivity** \u2014 KL Divergence between class-pair SHAP distributions\n\nEach metric is applied identically to all three models. A unified summary table and comparison plot are produced at the end.\n"
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "## 0. Setup \u2014 Load data and models"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "import joblib\nimport numpy as np\nimport pandas as pd\nimport shap\nimport lime\nimport lime.lime_tabular\nimport matplotlib.pyplot as plt\nimport matplotlib.ticker as mticker\nimport warnings\nimport os\nfrom sklearn.metrics import f1_score\nfrom scipy.stats import entropy\n\nwarnings.filterwarnings('ignore')\n\n# \u2500\u2500 Load shared data \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nX_train_raw   = np.load('../models/ds1/X_train.npy')\nX_test_raw    = np.load('../models/ds1/X_test.npy')\ny_test        = np.load('../models/ds1/y_test.npy')\nfeature_names = pd.read_csv('../models/ds1/feature_names.csv').squeeze().tolist()\n\nX_train = pd.DataFrame(X_train_raw, columns=feature_names)\nX_test  = pd.DataFrame(X_test_raw,  columns=feature_names)\n\nclass_names = ['Healthy', 'Benign', 'Cancer']\nn_features  = len(feature_names)\ntrain_means = X_train.mean()   # used for feature masking in Correctness\n\n# \u2500\u2500 Load models \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nrf_model  = joblib.load('../models/ds1/ds1_random_forest.pkl')\nsvm_model = joblib.load('../models/ds1/ds1_svm.pkl')\nmlp_model = joblib.load('../models/ds1/ds1_mlp.pkl')\n\nmodels = {\n    'Random Forest': rf_model,\n    'SVM':           svm_model,\n    'MLP':           mlp_model,\n}\n\n# \u2500\u2500 Output dirs \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nos.makedirs('../plots/ds1/evaluation', exist_ok=True)\n\nprint(f\"Test set size : {X_test.shape[0]} samples\")\nprint(f\"Features      : {n_features}\")\nprint(f\"Classes       : {dict(zip(*np.unique(y_test, return_counts=True)))}\")\n"
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "## 1. Compute SHAP values for all models"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "# \u2500\u2500 RF: TreeExplainer (exact, fast) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nrf_explainer   = shap.TreeExplainer(rf_model)\nshap_rf        = rf_explainer.shap_values(X_test)   # list of 3 arrays (n_test, n_feat)\n\n# \u2500\u2500 SVM & MLP: KernelExplainer (model-agnostic) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nbackground = shap.sample(X_train, 100, random_state=42)\n\nsvm_explainer  = shap.KernelExplainer(svm_model.predict_proba, background)\nshap_svm       = svm_explainer.shap_values(X_test)\n\nmlp_explainer  = shap.KernelExplainer(mlp_model.predict_proba, background)\nshap_mlp       = mlp_explainer.shap_values(X_test)\n\nshap_values_all = {\n    'Random Forest': shap_rf,\n    'SVM':           shap_svm,\n    'MLP':           shap_mlp,\n}\nprint(\"SHAP values computed for all models.\")\n"
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "---\n## Metric 1 \u2014 Correctness: Incremental Deletion\n\nFeatures are removed one-by-one in **descending order of global SHAP importance** (or LIME importance).  \nRemoved features are replaced with their training-set mean.  \nA good XAI method should produce the **steepest F1 drop** compared to random-order deletion.\n\n**AOPC** (Area Over the Perturbation Curve) summarises this: higher AOPC = better correctness.\n"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "# \u2500\u2500 Global SHAP importance = mean |SHAP| averaged over classes \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\ndef global_shap_importance(shap_vals):\n    \"\"\"shap_vals: list of (n_test, n_feat) arrays, one per class.\"\"\"\n    mean_abs = np.mean([np.abs(sv).mean(axis=0) for sv in shap_vals], axis=0)\n    return np.argsort(mean_abs)[::-1]   # descending\n\n# \u2500\u2500 Global LIME importance \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\ndef global_lime_importance(model_fn, n_runs=30):\n    \"\"\"Average |weight| across a sample of test instances and all classes.\"\"\"\n    lime_exp = lime.lime_tabular.LimeTabularExplainer(\n        X_train.values, feature_names=feature_names,\n        class_names=class_names, mode='classification', random_state=42)\n    importances = np.zeros(n_features)\n    indices = np.random.RandomState(0).choice(len(X_test), min(n_runs, len(X_test)), replace=False)\n    for idx in indices:\n        for cls_idx in range(len(class_names)):\n            exp = lime_exp.explain_instance(\n                X_test.iloc[idx].values, model_fn,\n                num_features=n_features, labels=[cls_idx])\n            for feat_idx, weight in exp.local_exp.get(cls_idx, []):\n                importances[feat_idx] += abs(weight)\n    return np.argsort(importances)[::-1]\n\n# \u2500\u2500 Incremental deletion \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\ndef incremental_deletion_f1(model, X, y, feature_order):\n    \"\"\"Return F1 (macro) at each step of removing top-k features.\"\"\"\n    X_masked = X.copy()\n    f1_scores = [f1_score(y, model.predict(X_masked), average='macro')]\n    for feat_idx in feature_order:\n        X_masked = X_masked.copy()\n        X_masked.iloc[:, feat_idx] = train_means.iloc[feat_idx]\n        f1_scores.append(f1_score(y, model.predict(X_masked), average='macro'))\n    return np.array(f1_scores)\n\ndef aopc(f1_curve):\n    \"\"\"Area Over Perturbation Curve = mean drop from baseline.\"\"\"\n    return float(np.mean(f1_curve[0] - f1_curve))\n\nprint(\"Correctness helpers defined.\")\n"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "np.random.seed(42)\ncorrectness_results = {}\n\nx_axis = np.linspace(0, 100, n_features + 1)\n\nfig, axes = plt.subplots(1, 3, figsize=(16, 5), sharey=True)\nfig.suptitle('Metric 1 \u2014 Correctness: Incremental Deletion', fontsize=14, fontweight='bold')\n\nfor ax, (model_name, model) in zip(axes, models.items()):\n    shap_vals = shap_values_all[model_name]\n\n    order_shap   = global_shap_importance(shap_vals)\n    order_lime   = global_lime_importance(model.predict_proba)\n    order_random = np.random.permutation(n_features)\n\n    f1_shap   = incremental_deletion_f1(model, X_test, y_test, order_shap)\n    f1_lime   = incremental_deletion_f1(model, X_test, y_test, order_lime)\n    f1_random = incremental_deletion_f1(model, X_test, y_test, order_random)\n\n    correctness_results[model_name] = {\n        'aopc_shap'  : aopc(f1_shap),\n        'aopc_lime'  : aopc(f1_lime),\n        'aopc_random': aopc(f1_random),\n        'f1_shap'    : f1_shap,\n        'f1_lime'    : f1_lime,\n        'f1_random'  : f1_random,\n    }\n\n    ax.plot(x_axis, f1_shap,   marker='o', ms=4, label=f'SHAP (AOPC={aopc(f1_shap):.3f})',   color='steelblue')\n    ax.plot(x_axis, f1_lime,   marker='s', ms=4, label=f'LIME (AOPC={aopc(f1_lime):.3f})',   color='darkorange')\n    ax.plot(x_axis, f1_random, marker='^', ms=4, label=f'Random (AOPC={aopc(f1_random):.3f})', color='grey', linestyle='--')\n    ax.set_title(model_name)\n    ax.set_xlabel('Features removed (%)')\n    ax.set_ylim(-0.05, 1.05)\n    ax.legend(fontsize=8)\n    ax.grid(alpha=0.3)\n\naxes[0].set_ylabel('Macro F1')\nplt.tight_layout()\nplt.savefig('../plots/ds1/evaluation/correctness_incremental_deletion.png', dpi=150, bbox_inches='tight')\nplt.show()\nprint(\"Correctness plots saved.\")\n"
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "---\n## Metric 2 \u2014 Consistency\n\n**2a. SHAP Determinism** \u2014 TreeExplainer (RF) is exact; KernelExplainer (SVM, MLP) introduces minor sampling variance. We run 5 times and compute mean pairwise Spearman correlation of global importance vectors.\n\n**2b. LIME Jaccard Similarity** \u2014 LIME is stochastic. We run 10 times on each test instance and measure how stable the top-5 feature set is across runs.\n"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "from scipy.stats import spearmanr\n\nN_RUNS_SHAP = 5\nN_RUNS_LIME = 10\nTOP_K       = 5\nLIME_SAMPLE = 30    # subset of test instances for speed\n\nconsistency_results = {}\n\n# \u2500\u2500 SHAP consistency \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfor model_name, model in models.items():\n    runs_importance = []\n    for _ in range(N_RUNS_SHAP):\n        if model_name == 'Random Forest':\n            exp = shap.TreeExplainer(model)\n            sv  = exp.shap_values(X_test)\n        else:\n            exp = shap.KernelExplainer(model.predict_proba, background)\n            sv  = exp.shap_values(X_test)\n        imp = np.mean([np.abs(s).mean(axis=0) for s in sv], axis=0)\n        runs_importance.append(imp)\n\n    # pairwise Spearman correlation (run i vs run 0)\n    corrs = [spearmanr(runs_importance[0], runs_importance[r]).correlation\n             for r in range(1, N_RUNS_SHAP)]\n    consistency_results.setdefault(model_name, {})['shap_spearman_mean'] = float(np.mean(corrs))\n    consistency_results[model_name]['shap_spearman_min']  = float(np.min(corrs))\n\nprint(\"SHAP consistency computed.\")\n"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "# \u2500\u2500 LIME consistency \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nlime_base = lime.lime_tabular.LimeTabularExplainer(\n    X_train.values, feature_names=feature_names,\n    class_names=class_names, mode='classification', random_state=42)\n\nsample_indices = np.random.RandomState(0).choice(len(X_test), LIME_SAMPLE, replace=False)\n\nfor model_name, model in models.items():\n    all_jaccard = []\n    for idx in sample_indices:\n        run_topk = []\n        for run in range(N_RUNS_LIME):\n            exp = lime_base.explain_instance(\n                X_test.iloc[idx].values, model.predict_proba,\n                num_features=n_features,\n                labels=list(range(len(class_names))),\n                random_state=run)\n            # aggregate top-k features across classes\n            top_feats = set()\n            for cls_idx in range(len(class_names)):\n                ranked = sorted(exp.local_exp.get(cls_idx, []), key=lambda x: -abs(x[1]))\n                top_feats.update(f for f, _ in ranked[:TOP_K])\n            run_topk.append(top_feats)\n\n        # Jaccard: each run vs run 0\n        for r in range(1, N_RUNS_LIME):\n            inter = len(run_topk[0] & run_topk[r])\n            union = len(run_topk[0] | run_topk[r])\n            all_jaccard.append(inter / union if union > 0 else 1.0)\n\n    consistency_results[model_name]['lime_jaccard_mean'] = float(np.mean(all_jaccard))\n    consistency_results[model_name]['lime_jaccard_min']  = float(np.min(all_jaccard))\n\nprint(\"LIME consistency computed.\")\n"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "# \u2500\u2500 Plot: Consistency comparison \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nmodel_labels = list(models.keys())\nshap_means   = [consistency_results[m]['shap_spearman_mean'] for m in model_labels]\nshap_mins    = [consistency_results[m]['shap_spearman_min']  for m in model_labels]\nlime_means   = [consistency_results[m]['lime_jaccard_mean']  for m in model_labels]\nlime_mins    = [consistency_results[m]['lime_jaccard_min']   for m in model_labels]\n\nx = np.arange(len(model_labels))\nwidth = 0.35\n\nfig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))\nfig.suptitle('Metric 2 \u2014 Consistency', fontsize=14, fontweight='bold')\n\nbars1 = ax1.bar(x - width/2, shap_means, width, label='Mean', color='steelblue')\nbars2 = ax1.bar(x + width/2, shap_mins,  width, label='Min',  color='lightsteelblue')\nax1.set_title('SHAP \u2014 Spearman \u03c1 across 5 runs')\nax1.set_xticks(x); ax1.set_xticklabels(model_labels)\nax1.set_ylim(0, 1.1); ax1.set_ylabel('Spearman \u03c1')\nax1.axhline(1.0, color='grey', linestyle='--', alpha=0.5)\nax1.legend(); ax1.grid(axis='y', alpha=0.3)\nfor bar in bars1: ax1.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.01, f'{bar.get_height():.3f}', ha='center', fontsize=8)\nfor bar in bars2: ax1.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.01, f'{bar.get_height():.3f}', ha='center', fontsize=8)\n\nbars3 = ax2.bar(x - width/2, lime_means, width, label='Mean', color='darkorange')\nbars4 = ax2.bar(x + width/2, lime_mins,  width, label='Min',  color='moccasin')\nax2.set_title(f'LIME \u2014 Jaccard Similarity (top-{TOP_K}) across 10 runs')\nax2.set_xticks(x); ax2.set_xticklabels(model_labels)\nax2.set_ylim(0, 1.1); ax2.set_ylabel('Jaccard Similarity')\nax2.axhline(1.0, color='grey', linestyle='--', alpha=0.5)\nax2.legend(); ax2.grid(axis='y', alpha=0.3)\nfor bar in bars3: ax2.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.01, f'{bar.get_height():.3f}', ha='center', fontsize=8)\nfor bar in bars4: ax2.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.01, f'{bar.get_height():.3f}', ha='center', fontsize=8)\n\nplt.tight_layout()\nplt.savefig('../plots/ds1/evaluation/consistency.png', dpi=150, bbox_inches='tight')\nplt.show()\n"
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "---\n## Metric 3 \u2014 Contrastivity: KL Divergence between class SHAP distributions\n\nFor each feature, we compare the SHAP value distributions between class pairs.  \n**High KL divergence** means the model uses that feature differently across classes \u2014 a sign of good discriminative explanations.  \nWe report the **mean KL divergence across all features** per class pair, for each model.\n"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "def kl_divergence_shap(shap_a, shap_b, n_bins=30):\n    \"\"\"Symmetric KL divergence between SHAP distributions of two classes (per feature).\"\"\"\n    all_vals = np.concatenate([shap_a, shap_b])\n    lo, hi   = all_vals.min() - 1e-9, all_vals.max() + 1e-9\n    bins     = np.linspace(lo, hi, n_bins + 1)\n    p, _ = np.histogram(shap_a, bins=bins, density=True)\n    q, _ = np.histogram(shap_b, bins=bins, density=True)\n    p = p + 1e-10;  q = q + 1e-10   # Laplace smoothing\n    p /= p.sum();   q /= q.sum()\n    return float(0.5 * (entropy(p, q) + entropy(q, p)))   # symmetric KL\n\npairs       = [(0, 1, 'Healthy vs Benign'),\n               (0, 2, 'Healthy vs Cancer'),\n               (1, 2, 'Benign vs Cancer')]\n\ncontrastivity_results = {}\n\nfor model_name in models:\n    shap_vals = shap_values_all[model_name]\n    pair_kl   = {}\n    for cls_a, cls_b, label in pairs:\n        kl_per_feat = [\n            kl_divergence_shap(shap_vals[cls_a][:, f], shap_vals[cls_b][:, f])\n            for f in range(n_features)\n        ]\n        pair_kl[label] = {\n            'mean': float(np.mean(kl_per_feat)),\n            'per_feature': kl_per_feat,\n        }\n    contrastivity_results[model_name] = pair_kl\n\nprint(\"KL divergence computed for all models.\")\n"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "# \u2500\u2500 Heatmap: KL divergence per model (features \u00d7 class pairs) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfig, axes = plt.subplots(1, 3, figsize=(18, 5))\nfig.suptitle('Metric 3 \u2014 Contrastivity: KL Divergence (SHAP class distributions)', fontsize=14, fontweight='bold')\n\nfor ax, model_name in zip(axes, models):\n    kl_matrix = np.array([\n        contrastivity_results[model_name][label]['per_feature']\n        for _, _, label in pairs\n    ])   # shape (3, n_features)\n\n    im = ax.imshow(kl_matrix, aspect='auto', cmap='YlOrRd')\n    ax.set_xticks(range(n_features))\n    ax.set_xticklabels(feature_names, rotation=45, ha='right', fontsize=7)\n    ax.set_yticks(range(3))\n    ax.set_yticklabels([label for _, _, label in pairs], fontsize=8)\n    ax.set_title(model_name)\n    plt.colorbar(im, ax=ax, label='KL Divergence (bits)')\n\nplt.tight_layout()\nplt.savefig('../plots/ds1/evaluation/contrastivity_heatmap.png', dpi=150, bbox_inches='tight')\nplt.show()\n\n# \u2500\u2500 Bar chart: mean KL per model \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfig, ax = plt.subplots(figsize=(9, 4))\nx = np.arange(len(pairs))\nwidth = 0.25\ncolors = ['steelblue', 'darkorange', 'seagreen']\n\nfor i, (model_name, color) in enumerate(zip(models, colors)):\n    means = [contrastivity_results[model_name][label]['mean'] for _, _, label in pairs]\n    bars  = ax.bar(x + i * width, means, width, label=model_name, color=color)\n    for bar in bars:\n        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.001,\n                f'{bar.get_height():.3f}', ha='center', fontsize=7)\n\nax.set_xticks(x + width); ax.set_xticklabels([label for _, _, label in pairs])\nax.set_ylabel('Mean KL Divergence (bits)')\nax.set_title('Contrastivity \u2014 Mean KL Divergence per Class Pair')\nax.legend(); ax.grid(axis='y', alpha=0.3)\nplt.tight_layout()\nplt.savefig('../plots/ds1/evaluation/contrastivity_bar.png', dpi=150, bbox_inches='tight')\nplt.show()\n"
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "---\n## Summary \u2014 All Models, All Metrics\n\nConsolidated table and comparison chart across RF, SVM, and MLP.\n"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "# \u2500\u2500 Build summary DataFrame \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nrows = []\nfor model_name in models:\n    cr = correctness_results[model_name]\n    co = consistency_results[model_name]\n    ct = contrastivity_results[model_name]\n\n    rows.append({\n        'Model'                       : model_name,\n        # Correctness\n        'AOPC SHAP'                   : round(cr['aopc_shap'],   4),\n        'AOPC LIME'                   : round(cr['aopc_lime'],   4),\n        'AOPC Random (baseline)'      : round(cr['aopc_random'], 4),\n        # Consistency\n        'SHAP Spearman \u03c1 (mean)'      : round(co['shap_spearman_mean'], 4),\n        'SHAP Spearman \u03c1 (min)'       : round(co['shap_spearman_min'],  4),\n        'LIME Jaccard (mean)'         : round(co['lime_jaccard_mean'],  4),\n        'LIME Jaccard (min)'          : round(co['lime_jaccard_min'],   4),\n        # Contrastivity\n        'KL Healthy vs Benign (mean)' : round(ct['Healthy vs Benign']['mean'], 4),\n        'KL Healthy vs Cancer (mean)' : round(ct['Healthy vs Cancer']['mean'], 4),\n        'KL Benign vs Cancer (mean)'  : round(ct['Benign vs Cancer']['mean'],  4),\n    })\n\nsummary_df = pd.DataFrame(rows).set_index('Model')\nprint(summary_df.to_string())\nsummary_df.to_csv('../plots/ds1/evaluation/summary_table.csv')\nprint(\"\\nSummary saved to ../plots/ds1/evaluation/summary_table.csv\")\n"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "# \u2500\u2500 Radar / spider chart for visual comparison \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfrom matplotlib.patches import FancyArrowPatch\nimport matplotlib.gridspec as gridspec\n\n# Normalize metrics to [0, 1] for radar\nmetrics_radar = {\n    'SHAP\\nCorrectness\\n(AOPC)' : [correctness_results[m]['aopc_shap']            for m in models],\n    'LIME\\nCorrectness\\n(AOPC)' : [correctness_results[m]['aopc_lime']            for m in models],\n    'SHAP\\nConsistency\\n(\u03c1)'   : [consistency_results[m]['shap_spearman_mean']   for m in models],\n    'LIME\\nConsistency\\n(J)'   : [consistency_results[m]['lime_jaccard_mean']    for m in models],\n    'KL Div\\nH vs C'            : [contrastivity_results[m]['Healthy vs Cancer']['mean'] for m in models],\n    'KL Div\\nB vs C'            : [contrastivity_results[m]['Benign vs Cancer']['mean']  for m in models],\n}\n\nlabels    = list(metrics_radar.keys())\nn_metrics = len(labels)\nangles    = np.linspace(0, 2 * np.pi, n_metrics, endpoint=False).tolist()\nangles   += angles[:1]   # close polygon\n\n# Normalize each metric to [0,1]\nraw = np.array(list(metrics_radar.values()))    # (n_metrics, n_models)\nnorm_min = raw.min(axis=1, keepdims=True)\nnorm_max = raw.max(axis=1, keepdims=True)\nnorm_range = np.where(norm_max - norm_min < 1e-9, 1, norm_max - norm_min)\nraw_norm = (raw - norm_min) / norm_range        # (n_metrics, n_models)\n\nfig, ax = plt.subplots(figsize=(7, 7), subplot_kw=dict(polar=True))\ncolors = ['steelblue', 'darkorange', 'seagreen']\n\nfor i, (model_name, color) in enumerate(zip(models, colors)):\n    vals = raw_norm[:, i].tolist()\n    vals += vals[:1]\n    ax.plot(angles, vals, color=color, linewidth=2, label=model_name)\n    ax.fill(angles, vals, color=color, alpha=0.1)\n\nax.set_thetagrids(np.degrees(angles[:-1]), labels, fontsize=8)\nax.set_ylim(0, 1)\nax.set_title('XAI Evaluation \u2014 Model Comparison\\n(all metrics normalised to [0,1])',\n             fontsize=12, fontweight='bold', pad=20)\nax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.15))\nplt.tight_layout()\nplt.savefig('../plots/ds1/evaluation/summary_radar.png', dpi=150, bbox_inches='tight')\nplt.show()\n"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "# \u2500\u2500 Print readable summary \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nprint(\"=\" * 70)\nprint(\"XAI EVALUATION SUMMARY \u2014 Dataset 1\")\nprint(\"=\" * 70)\n\nfor model_name in models:\n    cr = correctness_results[model_name]\n    co = consistency_results[model_name]\n    ct = contrastivity_results[model_name]\n\n    print(f\"\\n  {model_name}\")\n    print(f\"  {'\u2500'*40}\")\n    print(f\"  CORRECTNESS  AOPC-SHAP  = {cr['aopc_shap']:.4f}\")\n    print(f\"               AOPC-LIME  = {cr['aopc_lime']:.4f}\")\n    print(f\"               AOPC-RND   = {cr['aopc_random']:.4f}  (baseline)\")\n    print(f\"  CONSISTENCY  SHAP \u03c1     = {co['shap_spearman_mean']:.4f}  (min {co['shap_spearman_min']:.4f})\")\n    print(f\"               LIME J     = {co['lime_jaccard_mean']:.4f}  (min {co['lime_jaccard_min']:.4f})\")\n    print(f\"  CONTRASTIVITY  H vs B   = {ct['Healthy vs Benign']['mean']:.4f}\")\n    print(f\"                 H vs C   = {ct['Healthy vs Cancer']['mean']:.4f}\")\n    print(f\"                 B vs C   = {ct['Benign vs Cancer']['mean']:.4f}\")\n\nprint(\"\\n\" + \"=\" * 70)\nprint(\"All plots saved to: ../plots/ds1/evaluation/\")\nprint(\"Summary CSV saved to: ../plots/ds1/evaluation/summary_table.csv\")\n"
+  }
+ ]
+}
