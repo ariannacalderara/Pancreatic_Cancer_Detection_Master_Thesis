@@ -1,4 +1,0 @@
-Model,AOPC SHAP,AOPC LIME,AOPC Random (baseline),SHAP Reiteration (mean),SHAP Reiteration (min),LIME Reiteration (mean),LIME Reiteration (min),KL Healthy vs Benign (mean),KL Healthy vs Cancer (mean),KL Benign vs Cancer (mean)
-Random Forest,0.6214,0.6031,0.3007,1.0,1.0,0.7117,0.3333,2.5801,3.5113,2.7116
-SVM,0.6281,0.6031,0.3629,1.0,1.0,0.675,0.3333,2.6487,3.2666,2.9715
-MLP,0.6281,0.6031,0.2887,1.0,1.0,0.745,0.2667,2.6319,3.0916,3.1261
