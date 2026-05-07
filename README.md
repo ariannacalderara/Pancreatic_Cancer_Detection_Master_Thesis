@@ -1,5 +1,3 @@
-```
-
 # Pancreatic Cancer Detection: Master Thesis
 
 This repository contains the code, data processing pipelines, and experimental results developed for the Master Thesis titled Towards Accountable AI for PDAC: A Multimodal XAI Evaluation. 
