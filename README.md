@@ -26,6 +26,10 @@ Pancreatic cancer is often diagnosed at late stages due to the difficulty of ear
    git clone [https://github.com/ariannacalderara/Pancreatic_Cancer_Detection_Master_Thesis.git](https://github.com/ariannacalderara/Pancreatic_Cancer_Detection_Master_Thesis.git)
    cd Pancreatic_Cancer_Detection_Master_Thesis
 
+
+## Qualitative Evaluation
+The qualitative evaluation is achieved by a survey investigating correctness, consistency and contrastivity from a clinical perspective. The survey is availabe as a pdf export in the 'survey_appendix.pdf' file or can be visualized at this link: https://forms.gle/4JdmLdxXvgADLQxn6
+
    ```
 
 ## Contact
