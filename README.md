@@ -28,9 +28,7 @@ Pancreatic cancer is often diagnosed at late stages due to the difficulty of ear
 
 
 ## Qualitative Evaluation
-The qualitative evaluation is achieved by a survey investigating correctness, consistency and contrastivity from a clinical perspective. The survey is availabe as a pdf export in the 'survey_appendix.pdf' file or can be visualized at this link: https://forms.gle/4JdmLdxXvgADLQxn6
-
-   ```
+The qualitative evaluation is achieved by a survey investigating correctness, consistency and contrastivity from a clinical perspective. The survey is availabe as a pdf export in the 'survey_appendix.pdf' file or can be visualized at this link: https://forms.gle/4JdmLdxXvgADLQxn6 
 
 ## Contact
 **Arianna Calderara**  
